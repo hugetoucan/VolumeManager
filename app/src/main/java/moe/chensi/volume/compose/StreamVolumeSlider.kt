@@ -5,29 +5,45 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.ColorStateList
 import android.media.AudioManager
+import android.view.MotionEvent
+import android.widget.SeekBar
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import moe.chensi.volume.BuildConfig
+import moe.chensi.volume.DiagnosticSurface
+import moe.chensi.volume.MediaSliderImplementation
+import moe.chensi.volume.VolumeDiagnosticTrace
 import moe.chensi.volume.ui.theme.Typography
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -82,7 +98,9 @@ fun StreamVolumeSlider(
     name: String,
     audioManager: AudioManager,
     footer: (@Composable () -> Unit)? = null,
-    onChange: (() -> Unit)? = null
+    onChange: (() -> Unit)? = null,
+    diagnosticSurface: DiagnosticSurface? = null,
+    mediaImplementation: MediaSliderImplementation = MediaSliderImplementation.CUSTOM
 ) {
     val context = LocalContext.current
     var volume by remember { mutableIntStateOf(audioManager.getStreamVolume(streamType)) }
@@ -105,37 +123,254 @@ fun StreamVolumeSlider(
         volume = audioManager.getStreamVolume(streamType)
     }
 
+    val diagnosticMedia = BuildConfig.VOLUME_DIAGNOSTICS &&
+        streamType == AudioManager.STREAM_MUSIC && diagnosticSurface != null
+    val activeImplementation = if (diagnosticMedia && diagnosticSurface == DiagnosticSurface.OVERLAY) {
+        mediaImplementation
+    } else {
+        MediaSliderImplementation.CUSTOM
+    }
+
+    fun applyTarget(value: Float) {
+        val target = value.toInt()
+        if (diagnosticMedia) {
+            VolumeDiagnosticTrace.record(
+                context,
+                diagnosticSurface!!,
+                activeImplementation,
+                "callback_target",
+                "stream=STREAM_MUSIC target=$target current=$volume range=0..${maxVolume.toInt()}"
+            )
+        }
+        if (volume == target) {
+            if (diagnosticMedia) {
+                VolumeDiagnosticTrace.record(
+                    context,
+                    diagnosticSurface!!,
+                    activeImplementation,
+                    "callback_early_return",
+                    "stream=STREAM_MUSIC target=$target current=$volume"
+                )
+            }
+            return
+        }
+
+        volume = target
+        if (diagnosticMedia) {
+            VolumeDiagnosticTrace.record(
+                context,
+                diagnosticSurface!!,
+                activeImplementation,
+                "setter_begin",
+                "stream=STREAM_MUSIC target=$target"
+            )
+        }
+        try {
+            audioManager.setStreamVolume(streamType, target, 0)
+        } catch (exception: Exception) {
+            if (diagnosticMedia) {
+                VolumeDiagnosticTrace.record(
+                    context,
+                    diagnosticSurface!!,
+                    activeImplementation,
+                    "setter_exception",
+                    "stream=STREAM_MUSIC type=${exception.javaClass.simpleName}"
+                )
+                VolumeDiagnosticTrace.recordImmediateReadback(
+                    context,
+                    audioManager,
+                    diagnosticSurface!!,
+                    activeImplementation,
+                    streamType
+                )
+            }
+            throw exception
+        }
+        if (diagnosticMedia) {
+            VolumeDiagnosticTrace.record(
+                context,
+                diagnosticSurface!!,
+                activeImplementation,
+                "setter_return",
+                "stream=STREAM_MUSIC target=$target"
+            )
+            VolumeDiagnosticTrace.recordImmediateReadback(
+                context,
+                audioManager,
+                diagnosticSurface!!,
+                activeImplementation,
+                streamType
+            )
+        }
+        onChange?.invoke()
+    }
+
+    val latestApplyTarget by rememberUpdatedState<(Float) -> Unit> { value -> applyTarget(value) }
+
+    fun recordSeekBarDrag(phase: String, x: Float, y: Float, seekBar: SeekBar) {
+        val location = IntArray(2)
+        seekBar.getLocationOnScreen(location)
+        VolumeDiagnosticTrace.record(
+            context,
+            diagnosticSurface!!,
+            activeImplementation,
+            "drag_$phase",
+            "x=$x y=$y width=${seekBar.width} range=0..${seekBar.max} " +
+                "bounds=${location[0]},${location[1]},${location[0] + seekBar.width},${location[1] + seekBar.height}"
+        )
+        if (phase == "end" || phase == "cancel") {
+            VolumeDiagnosticTrace.scheduleReadbackAfterGesture(
+                context,
+                audioManager,
+                diagnosticSurface!!,
+                activeImplementation,
+                streamType,
+                phase
+            )
+        }
+    }
+
     Row(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        TrackSlider(
-            modifier = Modifier.weight(1f),
-            cornerRadius = 20.dp,
-            value = volume.toFloat(),
-            valueRange = 0f..maxVolume,
-            onValueChange = { value ->
-                val target = value.toInt()
-                if (volume == target) {
-                    return@TrackSlider
-                }
-
-                volume = target
-                audioManager.setStreamVolume(streamType, target, 0)
-                onChange?.invoke()
-            },
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(16.dp, 8.dp)
+        if (diagnosticMedia && activeImplementation == MediaSliderImplementation.SEEKBAR) {
+            val trackColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
+            val progressColor = androidx.compose.material3.MaterialTheme.colorScheme.primary
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(trackColor)
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = name,
-                    modifier = Modifier.size(32.dp),
+                AndroidView(
+                    modifier = Modifier.matchParentSize(),
+                    factory = { viewContext ->
+                        var lastTouchX = 0f
+                        var lastTouchY = 0f
+                        var lastTouchAction = MotionEvent.ACTION_DOWN
+                        SeekBar(viewContext).apply {
+                            progressTintList = ColorStateList.valueOf(progressColor.toArgb())
+                            progressBackgroundTintList = ColorStateList.valueOf(trackColor.toArgb())
+                            thumbTintList = ColorStateList.valueOf(progressColor.toArgb())
+                            max = maxVolume.toInt()
+                            progress = volume.coerceIn(0, max)
+                            setOnTouchListener { _, event ->
+                                lastTouchX = event.x
+                                lastTouchY = event.y
+                                lastTouchAction = event.actionMasked
+                                false
+                            }
+                            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                                override fun onProgressChanged(
+                                    seekBar: SeekBar,
+                                    progress: Int,
+                                    fromUser: Boolean
+                                ) {
+                                    if (fromUser) {
+                                        latestApplyTarget(progress.toFloat())
+                                    }
+                                }
+
+                                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                                    recordSeekBarDrag("start", lastTouchX, lastTouchY, seekBar)
+                                }
+
+                                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                                    val phase = if (lastTouchAction == MotionEvent.ACTION_CANCEL) {
+                                        "cancel"
+                                    } else {
+                                        "end"
+                                    }
+                                    recordSeekBarDrag(phase, lastTouchX, lastTouchY, seekBar)
+                                }
+                            })
+                        }
+                    },
+                    update = { seekBar ->
+                        seekBar.max = maxVolume.toInt()
+                        val target = volume.coerceIn(0, seekBar.max)
+                        if (seekBar.progress != target) {
+                            seekBar.progress = target
+                        }
+                        seekBar.progressTintList = ColorStateList.valueOf(progressColor.toArgb())
+                        seekBar.progressBackgroundTintList = ColorStateList.valueOf(trackColor.toArgb())
+                        seekBar.thumbTintList = ColorStateList.valueOf(progressColor.toArgb())
+                    }
                 )
-                StreamSliderTextContent(name = name, valueText = "$volume/${maxVolume.toInt()}")
+                CompositionLocalProvider(
+                    LocalContentColor provides androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(16.dp, 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = name,
+                            modifier = Modifier.size(32.dp),
+                        )
+                        StreamSliderTextContent(name = name, valueText = "$volume/${maxVolume.toInt()}")
+                    }
+                }
+            }
+        } else {
+            TrackSlider(
+                modifier = Modifier.weight(1f),
+                cornerRadius = 20.dp,
+                value = volume.toFloat(),
+                valueRange = 0f..maxVolume,
+                onValueChange = { value ->
+                    if (!diagnosticMedia) {
+                        val target = value.toInt()
+                        if (volume == target) {
+                            return@TrackSlider
+                        }
+
+                        volume = target
+                        audioManager.setStreamVolume(streamType, target, 0)
+                        onChange?.invoke()
+                    } else {
+                        applyTarget(value)
+                    }
+                },
+                onDiagnosticDragEvent = if (diagnosticMedia) {
+                    { phase, x, y, width, rangeStart, rangeEnd ->
+                        VolumeDiagnosticTrace.record(
+                            context,
+                            diagnosticSurface!!,
+                            activeImplementation,
+                            "drag_$phase",
+                            "x=$x y=$y width=$width range=$rangeStart..$rangeEnd"
+                        )
+                        if (phase == "end" || phase == "cancel") {
+                            VolumeDiagnosticTrace.scheduleReadbackAfterGesture(
+                                context,
+                                audioManager,
+                                diagnosticSurface!!,
+                                activeImplementation,
+                                streamType,
+                                phase
+                            )
+                        }
+                    }
+                } else {
+                    null
+                }
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(16.dp, 8.dp)
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = name,
+                        modifier = Modifier.size(32.dp),
+                    )
+                    StreamSliderTextContent(name = name, valueText = "$volume/${maxVolume.toInt()}")
+                }
             }
         }
 

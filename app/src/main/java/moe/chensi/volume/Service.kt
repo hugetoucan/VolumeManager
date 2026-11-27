@@ -33,6 +33,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.AbstractComposeView
@@ -194,8 +199,35 @@ class Service : AccessibilityService() {
                 return super.onTouchEvent(event)
             }
 
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                if (BuildConfig.VOLUME_DIAGNOSTICS) {
+                    VolumeDiagnosticTrace.recordRootTouch(
+                        DiagnosticSurface.OVERLAY,
+                        VolumeDiagnosticPreferences.overlayImplementation(this@Service),
+                        this,
+                        event
+                    )
+                }
+                return super.dispatchTouchEvent(event)
+            }
+
             @Composable
             override fun Content() {
+                var overlayImplementation by remember {
+                    mutableStateOf(VolumeDiagnosticPreferences.overlayImplementation(this@Service))
+                }
+                DisposableEffect(this@Service) {
+                    val unregister = if (BuildConfig.VOLUME_DIAGNOSTICS) {
+                        VolumeDiagnosticPreferences.observeOverlayImplementation(this@Service) {
+                            overlayImplementation =
+                                VolumeDiagnosticPreferences.overlayImplementation(this@Service)
+                        }
+                    } else {
+                        null
+                    }
+                    onDispose { unregister?.invoke() }
+                }
+
                 return VolumeManagerTheme {
                     Surface(
                         color = Color(1f, 1f, 1f, 0.3f),
@@ -219,7 +251,9 @@ class Service : AccessibilityService() {
                                         allowVisibilityConfig = false,
                                         isSliderVisible = manager::isSystemSliderVisible,
                                         onSliderVisibilityChange = manager::setSystemSliderVisible,
-                                        onChange = this@Service.handler::startIdleTimer
+                                        onChange = this@Service.handler::startIdleTimer,
+                                        diagnosticSurface = DiagnosticSurface.OVERLAY,
+                                        overlayMediaImplementation = overlayImplementation
                                     )
                                 }
                             }

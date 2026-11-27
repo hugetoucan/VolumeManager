@@ -49,10 +49,12 @@ android {
         versionName = "0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "VOLUME_DIAGNOSTICS", "false")
     }
 
     buildTypes {
         release {
+            buildConfigField("boolean", "VOLUME_DIAGNOSTICS", "true")
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

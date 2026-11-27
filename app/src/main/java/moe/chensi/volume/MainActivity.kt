@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -90,6 +91,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var application: MyApplication
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (BuildConfig.VOLUME_DIAGNOSTICS) {
+            VolumeDiagnosticTrace.recordRootTouch(
+                DiagnosticSurface.ACTIVITY,
+                MediaSliderImplementation.CUSTOM,
+                window.decorView,
+                event
+            )
+        }
+        return super.dispatchTouchEvent(event)
+    }
 
     @Suppress("SameParameterValue")
     @SuppressLint("MissingPermission")
@@ -359,6 +372,10 @@ class MainActivity : ComponentActivity() {
                             }
 
                             Manager.ShizukuStatus.Connected -> {
+                                if (BuildConfig.VOLUME_DIAGNOSTICS) {
+                                    VolumeDiagnosticsControls()
+                                }
+
                                 if (showAll) {
                                     Column(
                                         modifier = Modifier.fillMaxWidth(),
@@ -457,6 +474,7 @@ class MainActivity : ComponentActivity() {
                                                 allowVisibilityConfig = showAll,
                                                 isSliderVisible = manager::isSystemSliderVisible,
                                                 onSliderVisibilityChange = manager::setSystemSliderVisible,
+                                                diagnosticSurface = DiagnosticSurface.ACTIVITY,
                                             )
                                         }
                                     })
@@ -551,6 +569,70 @@ class MainActivity : ComponentActivity() {
                 }
             ) {
                 Text(text = stringResource(R.string.disable_battery_optimization))
+            }
+        }
+    }
+}
+
+@Composable
+private fun VolumeDiagnosticsControls() {
+    val context = LocalContext.current
+    var overlayImplementation by remember(context) {
+        mutableStateOf(VolumeDiagnosticPreferences.overlayImplementation(context))
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.volume_diagnostics_title))
+        Text(stringResource(R.string.volume_diagnostics_activity_control))
+        Text(
+            stringResource(
+                R.string.volume_diagnostics_overlay_implementation,
+                stringResource(
+                    if (overlayImplementation == MediaSliderImplementation.CUSTOM) {
+                        R.string.volume_diagnostics_custom
+                    } else {
+                        R.string.volume_diagnostics_seekbar
+                    }
+                )
+            )
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = {
+                overlayImplementation = overlayImplementation.other()
+                VolumeDiagnosticPreferences.setOverlayImplementation(context, overlayImplementation)
+            }) {
+                Text(
+                    stringResource(
+                        if (overlayImplementation == MediaSliderImplementation.CUSTOM) {
+                            R.string.volume_diagnostics_switch_to_seekbar
+                        } else {
+                            R.string.volume_diagnostics_switch_to_custom
+                        }
+                    )
+                )
+            }
+            TextButton(onClick = {
+                VolumeDiagnosticTrace.clear(context)
+                Toast.makeText(context, R.string.volume_diagnostics_trace_cleared, Toast.LENGTH_SHORT).show()
+            }) {
+                Text(stringResource(R.string.volume_diagnostics_clear_trace))
+            }
+            TextButton(onClick = {
+                val trace = VolumeDiagnosticTrace.export(context)
+                if (trace.isBlank()) {
+                    Toast.makeText(context, R.string.volume_diagnostics_trace_empty, Toast.LENGTH_SHORT).show()
+                } else {
+                    val clipboard = context.getSystemService(ClipboardManager::class.java)
+                    clipboard.setPrimaryClip(
+                        ClipData.newPlainText(
+                            context.getString(R.string.volume_diagnostics_clipboard_label),
+                            trace
+                        )
+                    )
+                    Toast.makeText(context, R.string.copied_to_clipboard, Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text(stringResource(R.string.volume_diagnostics_copy_trace))
             }
         }
     }

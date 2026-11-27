@@ -36,6 +36,7 @@ fun TrackSlider(
     onFillColor: Color = MaterialTheme.colorScheme.onPrimary,
     cornerRadius: Dp = 8.dp,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    onDiagnosticDragEvent: ((String, Float, Float, Float, Float, Float) -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit = {}
 ) {
     val coercedValue = value.coerceIn(valueRange.start, valueRange.endInclusive)
@@ -63,11 +64,51 @@ fun TrackSlider(
                 if (enabled) {
                     var startValue = 0f
                     var startX = 0f
+                    var lastX = 0f
+                    var lastY = 0f
 
-                    detectHorizontalDragGestures(onDragStart = { offset ->
-                        startValue = latestValue
-                        startX = offset.x
-                    }) { change, _ ->
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            startValue = latestValue
+                            startX = offset.x
+                            if (onDiagnosticDragEvent != null) {
+                                lastX = offset.x
+                                lastY = offset.y
+                                onDiagnosticDragEvent.invoke(
+                                    "start",
+                                    offset.x,
+                                    offset.y,
+                                    size.width.toFloat(),
+                                    valueRange.start,
+                                    valueRange.endInclusive
+                                )
+                            }
+                        },
+                        onDragEnd = {
+                            onDiagnosticDragEvent?.invoke(
+                                "end",
+                                lastX,
+                                lastY,
+                                size.width.toFloat(),
+                                valueRange.start,
+                                valueRange.endInclusive
+                            )
+                        },
+                        onDragCancel = {
+                            onDiagnosticDragEvent?.invoke(
+                                "cancel",
+                                lastX,
+                                lastY,
+                                size.width.toFloat(),
+                                valueRange.start,
+                                valueRange.endInclusive
+                            )
+                        }
+                    ) { change, _ ->
+                        if (onDiagnosticDragEvent != null) {
+                            lastX = change.position.x
+                            lastY = change.position.y
+                        }
                         val dragAmount = change.position.x - startX
                         val changedPercentage = dragAmount / size.width.toFloat()
                         val totalRange = valueRange.endInclusive - valueRange.start

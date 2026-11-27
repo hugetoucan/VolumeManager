@@ -70,4 +70,16 @@
     <string name="copy_full_message">Copy full message</string>
     <string name="disable_battery_optimization">Disable battery optimization</string>
     <string name="accessibility_service_died">Accessibility service died!</string>
+    <string name="volume_diagnostics_title">Slider diagnostics</string>
+    <string name="volume_diagnostics_activity_control">Activity Media slider remains Compose (control).</string>
+    <string name="volume_diagnostics_overlay_implementation">Overlay Media slider: %1$s</string>
+    <string name="volume_diagnostics_custom">Compose</string>
+    <string name="volume_diagnostics_seekbar">Android SeekBar</string>
+    <string name="volume_diagnostics_switch_to_seekbar">Use Android SeekBar</string>
+    <string name="volume_diagnostics_switch_to_custom">Use Compose slider</string>
+    <string name="volume_diagnostics_clear_trace">Clear trace</string>
+    <string name="volume_diagnostics_copy_trace">Copy trace</string>
+    <string name="volume_diagnostics_trace_cleared">Trace cleared</string>
+    <string name="volume_diagnostics_trace_empty">No diagnostic trace to copy</string>
+    <string name="volume_diagnostics_clipboard_label">Volume slider diagnostic trace</string>
 </resources>

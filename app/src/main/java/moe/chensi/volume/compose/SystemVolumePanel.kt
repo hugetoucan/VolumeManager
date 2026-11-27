@@ -33,6 +33,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import moe.chensi.volume.DiagnosticSurface
+import moe.chensi.volume.MediaSliderImplementation
 import moe.chensi.volume.R
 import moe.chensi.volume.system.NotificationManagerProxy
 
@@ -58,7 +60,9 @@ fun SystemVolumePanel(
     allowVisibilityConfig: Boolean,
     isSliderVisible: (String) -> Boolean,
     onSliderVisibilityChange: (String, Boolean) -> Unit,
-    onChange: (() -> Unit)? = null
+    onChange: (() -> Unit)? = null,
+    diagnosticSurface: DiagnosticSurface? = null,
+    overlayMediaImplementation: MediaSliderImplementation = MediaSliderImplementation.CUSTOM
 ) {
     val context = LocalContext.current
     val executor = remember(context) { ContextCompat.getMainExecutor(context) }
@@ -115,7 +119,9 @@ fun SystemVolumePanel(
                         onSliderVisibilityChange = onSliderVisibilityChange
                     )
                 },
-                onChange = onChange
+                onChange = onChange,
+                diagnosticSurface = diagnosticSurface,
+                mediaImplementation = overlayMediaImplementation
             )
         }
 
