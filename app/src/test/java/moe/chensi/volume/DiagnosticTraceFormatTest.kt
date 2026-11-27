@@ -41,6 +41,17 @@ class DiagnosticTraceFormatTest {
     }
 
     @Test
+    fun prependKeepsCurrentSessionEntriesWhenOldTraceExceedsBuffer() {
+        val buffer = BoundedTraceBuffer(maxEntries = 3, maxCharacters = 100, maxLineCharacters = 20)
+        buffer.append("new-1")
+        buffer.append("new-2")
+
+        buffer.prepend("old-1\nold-2\nold-3\nold-4")
+
+        assertEquals("old-4\nnew-1\nnew-2", buffer.snapshot())
+    }
+
+    @Test
     fun clearEmptiesBufferAndAdvancesRevision() {
         val buffer = BoundedTraceBuffer(maxEntries = 4, maxCharacters = 20, maxLineCharacters = 10)
         buffer.append("one")

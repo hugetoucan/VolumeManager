@@ -56,6 +56,18 @@ internal class BoundedTraceBuffer(
         TraceSnapshot(revision = revision, text = entries.joinToString("\n"))
 
     @Synchronized
+    fun prepend(previousEntries: String) {
+        val currentEntries = snapshot()
+        clear()
+        previousEntries.lineSequence()
+            .filter(String::isNotEmpty)
+            .forEach(::append)
+        currentEntries.lineSequence()
+            .filter(String::isNotEmpty)
+            .forEach(::append)
+    }
+
+    @Synchronized
     fun clear() {
         entries.clear()
         characterCount = 0

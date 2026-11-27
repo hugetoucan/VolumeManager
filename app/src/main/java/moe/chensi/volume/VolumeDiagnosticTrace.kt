@@ -6,7 +6,9 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.system.ErrnoException
 import android.system.Os
+import android.system.OsConstants
 import android.view.MotionEvent
 import android.view.View
 import java.io.File
@@ -293,16 +295,24 @@ internal object VolumeDiagnosticTrace {
                 loadAttempted = true
                 try {
                     val file = File(context.noBackupFilesDir, TRACE_FILE_NAME)
-                    if (file.isFile) {
-                        file.readText(Charsets.UTF_8)
-                            .takeLast(MAX_TRACE_CHARACTERS)
-                            .lineSequence()
-                            .filter(String::isNotEmpty)
-                            .forEach(buffer::append)
+                    val fileExists = try {
+                        Os.stat(file.absolutePath)
+                        true
+                    } catch (exception: ErrnoException) {
+                        if (exception.errno == OsConstants.ENOENT) {
+                            false
+                        } else {
+                            throw exception
+                        }
+                    }
+                    if (fileExists) {
+                        buffer.prepend(
+                            file.readText(Charsets.UTF_8).takeLast(MAX_TRACE_CHARACTERS)
+                        )
                     }
                     loadedSuccessfully = true
                 } catch (_: Exception) {
-                    // Keep the existing file untouched if its contents cannot be read.
+                    // Preserve the existing file and avoid replacing it when loading fails.
                     loadedSuccessfully = false
                 }
                 loadedSuccessfully
