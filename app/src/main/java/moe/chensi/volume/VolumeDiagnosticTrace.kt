@@ -11,6 +11,8 @@ import android.view.View
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 enum class DiagnosticSurface(val tag: String) {
     ACTIVITY("activity"),
