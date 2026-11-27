@@ -156,13 +156,14 @@ fun StreamVolumeSlider(
         }
 
         volume = target
+        val setterId = if (diagnosticMedia) VolumeDiagnosticTrace.nextSetterId() else 0L
         if (diagnosticMedia) {
             VolumeDiagnosticTrace.record(
                 context,
                 diagnosticSurface!!,
                 activeImplementation,
                 "setter_begin",
-                "stream=STREAM_MUSIC target=$target"
+                "setter_id=$setterId stream=STREAM_MUSIC target=$target"
             )
         }
         try {
@@ -174,14 +175,26 @@ fun StreamVolumeSlider(
                     diagnosticSurface!!,
                     activeImplementation,
                     "setter_exception",
-                    "stream=STREAM_MUSIC type=${exception.javaClass.simpleName}"
+                    "setter_id=$setterId stream=STREAM_MUSIC target=$target " +
+                        "type=${exception.javaClass.simpleName}"
                 )
                 VolumeDiagnosticTrace.recordImmediateReadback(
                     context,
                     audioManager,
                     diagnosticSurface!!,
                     activeImplementation,
-                    streamType
+                    streamType,
+                    target,
+                    setterId
+                )
+                VolumeDiagnosticTrace.scheduleReadbackAfterSetter(
+                    context,
+                    audioManager,
+                    diagnosticSurface!!,
+                    activeImplementation,
+                    streamType,
+                    target,
+                    setterId
                 )
             }
             throw exception
@@ -192,14 +205,25 @@ fun StreamVolumeSlider(
                 diagnosticSurface!!,
                 activeImplementation,
                 "setter_return",
-                "stream=STREAM_MUSIC target=$target"
+                "setter_id=$setterId stream=STREAM_MUSIC target=$target"
             )
             VolumeDiagnosticTrace.recordImmediateReadback(
                 context,
                 audioManager,
                 diagnosticSurface!!,
                 activeImplementation,
-                streamType
+                streamType,
+                target,
+                setterId
+            )
+            VolumeDiagnosticTrace.scheduleReadbackAfterSetter(
+                context,
+                audioManager,
+                diagnosticSurface!!,
+                activeImplementation,
+                streamType,
+                target,
+                setterId
             )
         }
         onChange?.invoke()
@@ -218,16 +242,6 @@ fun StreamVolumeSlider(
             "x=$x y=$y width=${seekBar.width} range=0..${seekBar.max} " +
                 "bounds=${location[0]},${location[1]},${location[0] + seekBar.width},${location[1] + seekBar.height}"
         )
-        if (phase == "end" || phase == "cancel") {
-            VolumeDiagnosticTrace.scheduleReadbackAfterGesture(
-                context,
-                audioManager,
-                diagnosticSurface!!,
-                activeImplementation,
-                streamType,
-                phase
-            )
-        }
     }
 
     Row(
@@ -344,16 +358,6 @@ fun StreamVolumeSlider(
                             "drag_$phase",
                             "x=$x y=$y width=$width range=$rangeStart..$rangeEnd"
                         )
-                        if (phase == "end" || phase == "cancel") {
-                            VolumeDiagnosticTrace.scheduleReadbackAfterGesture(
-                                context,
-                                audioManager,
-                                diagnosticSurface!!,
-                                activeImplementation,
-                                streamType,
-                                phase
-                            )
-                        }
                     }
                 } else {
                     null

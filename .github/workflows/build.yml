@@ -12,6 +12,12 @@ on:
       - README.md
       - fastlane/**
   workflow_dispatch:
+    inputs:
+      volume_diagnostics:
+        description: Build the overlay slider A/B diagnostic APK
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -29,7 +35,12 @@ jobs:
           cache: "gradle"
 
       - name: Build
-        run: ./gradlew assembleRelease
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.volume_diagnostics }}" == "true" ]]; then
+            ./gradlew testReleaseUnitTest assembleRelease -PvolumeDiagnostics=true
+          else
+            ./gradlew assembleRelease
+          fi
 
       - name: Sign APK
         run: |

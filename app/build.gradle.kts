@@ -36,6 +36,8 @@ androidAopConfig {
     cutInfoJson = false
 }
 
+val volumeDiagnosticsEnabled = providers.gradleProperty("volumeDiagnostics").orNull?.toBoolean() == true
+
 android {
     namespace = "moe.chensi.volume"
     compileSdk = 36
@@ -49,12 +51,11 @@ android {
         versionName = "0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("boolean", "VOLUME_DIAGNOSTICS", "false")
+        buildConfigField("boolean", "VOLUME_DIAGNOSTICS", volumeDiagnosticsEnabled.toString())
     }
 
     buildTypes {
         release {
-            buildConfigField("boolean", "VOLUME_DIAGNOSTICS", "true")
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

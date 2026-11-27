@@ -612,8 +612,13 @@ private fun VolumeDiagnosticsControls() {
                 )
             }
             TextButton(onClick = {
-                VolumeDiagnosticTrace.clear(context)
-                Toast.makeText(context, R.string.volume_diagnostics_trace_cleared, Toast.LENGTH_SHORT).show()
+                val cleared = VolumeDiagnosticTrace.clear(context)
+                Toast.makeText(
+                    context,
+                    if (cleared) R.string.volume_diagnostics_trace_cleared
+                    else R.string.volume_diagnostics_trace_clear_failed,
+                    Toast.LENGTH_SHORT
+                ).show()
             }) {
                 Text(stringResource(R.string.volume_diagnostics_clear_trace))
             }

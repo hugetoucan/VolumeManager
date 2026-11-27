@@ -41,6 +41,19 @@ class DiagnosticTraceFormatTest {
     }
 
     @Test
+    fun clearEmptiesBufferAndAdvancesRevision() {
+        val buffer = BoundedTraceBuffer(maxEntries = 4, maxCharacters = 20, maxLineCharacters = 10)
+        buffer.append("one")
+        val beforeClear = buffer.snapshotWithRevision().revision
+
+        buffer.clear()
+
+        val afterClear = buffer.snapshotWithRevision()
+        assertEquals(beforeClear + 1, afterClear.revision)
+        assertEquals("", afterClear.text)
+    }
+
+    @Test
     fun bufferKeepsEachEntryOnOneBoundedLine() {
         val buffer = BoundedTraceBuffer(maxEntries = 4, maxCharacters = 12, maxLineCharacters = 6)
 

@@ -80,6 +80,7 @@
     <string name="volume_diagnostics_clear_trace">Clear trace</string>
     <string name="volume_diagnostics_copy_trace">Copy trace</string>
     <string name="volume_diagnostics_trace_cleared">Trace cleared</string>
+    <string name="volume_diagnostics_trace_clear_failed">Unable to clear diagnostic trace</string>
     <string name="volume_diagnostics_trace_empty">No diagnostic trace to copy</string>
     <string name="volume_diagnostics_clipboard_label">Volume slider diagnostic trace</string>
 </resources>

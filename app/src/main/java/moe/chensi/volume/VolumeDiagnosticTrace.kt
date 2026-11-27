@@ -12,12 +12,12 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 
-internal enum class DiagnosticSurface(val tag: String) {
+enum class DiagnosticSurface(val tag: String) {
     ACTIVITY("activity"),
     OVERLAY("overlay")
 }
 
-internal enum class MediaSliderImplementation(val tag: String) {
+enum class MediaSliderImplementation(val tag: String) {
     CUSTOM("custom"),
     SEEKBAR("seekbar");
 
@@ -68,14 +68,25 @@ internal object VolumeDiagnosticTrace {
     private const val TRACE_FILE_NAME = "volume-diagnostics.log"
     private const val MAX_TRACE_CHARACTERS = 24 * 1024
     private const val READBACK_DELAY_MS = 350L
+    private const val WRITE_COALESCE_MS = 100L
 
     private val buffer = BoundedTraceBuffer(maxCharacters = MAX_TRACE_CHARACTERS)
     private val writer = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "volume-diagnostic-trace").apply { isDaemon = true }
     }
+    private val writeScheduled = AtomicBoolean(false)
+    private val setterSequence = AtomicLong(0L)
+    private val fileLock = Any()
+    private val loadLock = Any()
+    private val readbackHandler = Handler(Looper.getMainLooper())
+    private val readbackLock = Any()
 
     @Volatile
-    private var clearedSinceStart = false
+    private var loaded = false
+    private var clearGeneration = 0L
+    private var pendingReadback: Runnable? = null
+
+    fun nextSetterId(): Long = setterSequence.incrementAndGet()
 
     fun record(
         context: Context,
@@ -88,8 +99,10 @@ internal object VolumeDiagnosticTrace {
             return
         }
 
+        val applicationContext = context.applicationContext
         try {
-            val snapshot = buffer.append(
+            ensureLoaded(applicationContext)
+            buffer.append(
                 DiagnosticTraceFormatter.format(
                     timestampMs = SystemClock.elapsedRealtime(),
                     surface = surface.tag,
@@ -98,9 +111,7 @@ internal object VolumeDiagnosticTrace {
                     details = details
                 )
             )
-            clearedSinceStart = false
-            val applicationContext = context.applicationContext
-            writer.execute { writeSnapshot(applicationContext, snapshot) }
+            schedulePersist(applicationContext)
         } catch (_: Exception) {
             // Diagnostics must not affect the volume controls.
         }
@@ -142,7 +153,9 @@ internal object VolumeDiagnosticTrace {
         audioManager: AudioManager,
         surface: DiagnosticSurface,
         implementation: MediaSliderImplementation,
-        streamType: Int
+        streamType: Int,
+        target: Int,
+        setterId: Long
     ) {
         if (!BuildConfig.VOLUME_DIAGNOSTICS) {
             return
@@ -152,77 +165,149 @@ internal object VolumeDiagnosticTrace {
             surface,
             implementation,
             "readback_after_setter",
-            "stream=STREAM_MUSIC volume=${readVolume(audioManager, streamType)}"
+            "setter_id=$setterId target=$target stream=STREAM_MUSIC " +
+                "volume=${readVolume(audioManager, streamType)}"
         )
     }
 
-    fun scheduleReadbackAfterGesture(
+    /** Debounce readback after every setter, not only drag callbacks. */
+    fun scheduleReadbackAfterSetter(
         context: Context,
         audioManager: AudioManager,
         surface: DiagnosticSurface,
         implementation: MediaSliderImplementation,
         streamType: Int,
-        gesture: String
+        target: Int,
+        setterId: Long
     ) {
         if (!BuildConfig.VOLUME_DIAGNOSTICS) {
             return
         }
+
         val applicationContext = context.applicationContext
-        Handler(Looper.getMainLooper()).postDelayed({
-            record(
-                applicationContext,
-                surface,
-                implementation,
-                "readback_after_gesture",
-                "stream=STREAM_MUSIC delay_ms=$READBACK_DELAY_MS " +
-                    "gesture=$gesture volume=${readVolume(audioManager, streamType)}"
-            )
-        }, READBACK_DELAY_MS)
+        synchronized(readbackLock) {
+            pendingReadback?.let(readbackHandler::removeCallbacks)
+            val capturedGeneration = clearGeneration
+            val task = object : Runnable {
+                override fun run() {
+                    val shouldRecord = synchronized(readbackLock) {
+                        if (capturedGeneration != clearGeneration || pendingReadback !== this) {
+                            false
+                        } else {
+                            pendingReadback = null
+                            true
+                        }
+                    }
+                    if (shouldRecord) {
+                        record(
+                            applicationContext,
+                            surface,
+                            implementation,
+                            "readback_delayed",
+                            "setter_id=$setterId target=$target stream=STREAM_MUSIC " +
+                                "delay_ms=$READBACK_DELAY_MS volume=${readVolume(audioManager, streamType)}"
+                        )
+                    }
+                }
+            }
+            pendingReadback = task
+            readbackHandler.postDelayed(task, READBACK_DELAY_MS)
+        }
     }
 
     fun export(context: Context): String {
         if (!BuildConfig.VOLUME_DIAGNOSTICS) {
             return ""
         }
+        val applicationContext = context.applicationContext
+        ensureLoaded(applicationContext)
         val current = buffer.snapshot()
-        if (current.isNotEmpty() || clearedSinceStart) {
-            return current
+        schedulePersist(applicationContext)
+        return current
+    }
+
+    /** Returns true only after the private trace file has been cleared successfully. */
+    fun clear(context: Context): Boolean {
+        if (!BuildConfig.VOLUME_DIAGNOSTICS) {
+            return false
         }
+
+        synchronized(readbackLock) {
+            clearGeneration++
+            pendingReadback?.let(readbackHandler::removeCallbacks)
+            pendingReadback = null
+        }
+        buffer.clear()
+        synchronized(loadLock) {
+            loaded = true
+        }
+
         return try {
-            File(context.applicationContext.noBackupFilesDir, TRACE_FILE_NAME)
-                .takeIf { it.isFile }
-                ?.readText(Charsets.UTF_8)
-                ?.takeLast(MAX_TRACE_CHARACTERS)
-                .orEmpty()
+            synchronized(fileLock) {
+                File(context.applicationContext.noBackupFilesDir, TRACE_FILE_NAME)
+                    .writeText("", Charsets.UTF_8)
+            }
+            true
         } catch (_: Exception) {
-            ""
+            false
         }
     }
 
-    fun clear(context: Context) {
-        if (!BuildConfig.VOLUME_DIAGNOSTICS) {
+    private fun ensureLoaded(context: Context) {
+        if (loaded) {
             return
         }
-        buffer.clear()
-        clearedSinceStart = true
-        val applicationContext = context.applicationContext
-        writer.execute {
+        synchronized(loadLock) {
+            if (loaded) {
+                return
+            }
             try {
-                File(applicationContext.noBackupFilesDir, TRACE_FILE_NAME).delete()
+                val file = File(context.noBackupFilesDir, TRACE_FILE_NAME)
+                if (file.isFile) {
+                    file.readText(Charsets.UTF_8)
+                        .takeLast(MAX_TRACE_CHARACTERS)
+                        .lineSequence()
+                        .filter(String::isNotEmpty)
+                        .forEach(buffer::append)
+                }
             } catch (_: Exception) {
-                // Diagnostics must not affect the volume controls.
+                // A missing or unreadable previous trace must not block controls.
+            } finally {
+                loaded = true
             }
         }
     }
 
-    private fun writeSnapshot(context: Context, snapshot: String) {
+    /** Coalesces bursts: at most one writer task is queued or running. */
+    private fun schedulePersist(context: Context) {
+        if (!writeScheduled.compareAndSet(false, true)) {
+            return
+        }
         try {
-            File(context.noBackupFilesDir, TRACE_FILE_NAME).writeText(
-                snapshot.take(MAX_TRACE_CHARACTERS),
-                Charsets.UTF_8
-            )
+            writer.execute {
+                var writtenRevision: Long? = null
+                try {
+                    Thread.sleep(WRITE_COALESCE_MS)
+                    writtenRevision = synchronized(fileLock) {
+                        val snapshot = buffer.snapshotWithRevision()
+                        File(context.noBackupFilesDir, TRACE_FILE_NAME)
+                            .writeText(snapshot.text, Charsets.UTF_8)
+                        snapshot.revision
+                    }
+                } catch (_: Exception) {
+                    // Diagnostics must not affect the volume controls.
+                } finally {
+                    writeScheduled.set(false)
+                    val needsRetry = writtenRevision?.let {
+                        buffer.snapshotWithRevision().revision != it
+                    } == true
+                    if (needsRetry) {
+                        schedulePersist(context)
+                    }
+                }
+            }
         } catch (_: Exception) {
-            // Diagnostics must not affect the volume controls.
+            writeScheduled.set(false)
         }
     }
 

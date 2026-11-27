@@ -11,6 +11,8 @@ internal object DiagnosticTraceFormatter {
         "$timestampMs surface=$surface impl=$implementation event=$event $details".trimEnd()
 }
 
+internal data class TraceSnapshot(val revision: Long, val text: String)
+
 internal class BoundedTraceBuffer(
     private val maxEntries: Int = 160,
     private val maxCharacters: Int = 24 * 1024,
@@ -18,6 +20,7 @@ internal class BoundedTraceBuffer(
 ) {
     private val entries = ArrayDeque<String>()
     private var characterCount = 0
+    private var revision = 0L
 
     init {
         require(maxEntries > 0)
@@ -27,13 +30,14 @@ internal class BoundedTraceBuffer(
     }
 
     @Synchronized
-    fun append(line: String): String {
+    fun append(line: String) {
         val normalized = line.replace('\r', ' ').replace('\n', ' ').take(maxLineCharacters)
         if (entries.isNotEmpty()) {
             characterCount++
         }
         entries.addLast(normalized)
         characterCount += normalized.length
+        revision++
 
         while (entries.size > maxEntries || characterCount > maxCharacters) {
             val removed = entries.removeFirst()
@@ -42,16 +46,19 @@ internal class BoundedTraceBuffer(
                 characterCount--
             }
         }
-
-        return entries.joinToString("\n")
     }
 
     @Synchronized
     fun snapshot(): String = entries.joinToString("\n")
 
     @Synchronized
+    fun snapshotWithRevision(): TraceSnapshot =
+        TraceSnapshot(revision = revision, text = entries.joinToString("\n"))
+
+    @Synchronized
     fun clear() {
         entries.clear()
         characterCount = 0
+        revision++
     }
 }
