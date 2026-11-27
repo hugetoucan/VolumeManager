@@ -6,10 +6,13 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.system.Os
 import android.view.MotionEvent
 import android.view.View
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -72,6 +75,7 @@ internal object VolumeDiagnosticTrace {
     private const val READBACK_DELAY_MS = 350L
     private const val WRITE_COALESCE_MS = 100L
 
+    private val sessionId = UUID.randomUUID().toString().substringBefore('-')
     private val buffer = BoundedTraceBuffer(maxCharacters = MAX_TRACE_CHARACTERS)
     private val writer = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "volume-diagnostic-trace").apply { isDaemon = true }
@@ -84,11 +88,20 @@ internal object VolumeDiagnosticTrace {
     private val readbackLock = Any()
 
     @Volatile
-    private var loaded = false
+    private var loadAttempted = false
+    @Volatile
+    private var loadedSuccessfully = false
     private var clearGeneration = 0L
     private var pendingReadback: Runnable? = null
 
     fun nextSetterId(): Long = setterSequence.incrementAndGet()
+
+    /** Load the small private trace before the first user touch is routed. */
+    fun initialize(context: Context) {
+        if (BuildConfig.VOLUME_DIAGNOSTICS) {
+            ensureLoaded(context.applicationContext, retryOnFailure = true)
+        }
+    }
 
     fun record(
         context: Context,
@@ -103,17 +116,19 @@ internal object VolumeDiagnosticTrace {
 
         val applicationContext = context.applicationContext
         try {
-            ensureLoaded(applicationContext)
+            val canPersist = ensureLoaded(applicationContext)
             buffer.append(
                 DiagnosticTraceFormatter.format(
                     timestampMs = SystemClock.elapsedRealtime(),
                     surface = surface.tag,
                     implementation = implementation.tag,
                     event = event,
-                    details = details
+                    details = "session=$sessionId $details"
                 )
             )
-            schedulePersist(applicationContext)
+            if (canPersist) {
+                schedulePersist(applicationContext)
+            }
         } catch (_: Exception) {
             // Diagnostics must not affect the volume controls.
         }
@@ -222,9 +237,11 @@ internal object VolumeDiagnosticTrace {
             return ""
         }
         val applicationContext = context.applicationContext
-        ensureLoaded(applicationContext)
+        val canPersist = ensureLoaded(applicationContext, retryOnFailure = true)
         val current = buffer.snapshot()
-        schedulePersist(applicationContext)
+        if (canPersist) {
+            schedulePersist(applicationContext)
+        }
         return current
     }
 
@@ -233,49 +250,62 @@ internal object VolumeDiagnosticTrace {
         if (!BuildConfig.VOLUME_DIAGNOSTICS) {
             return false
         }
+        val applicationContext = context.applicationContext
+        if (!ensureLoaded(applicationContext, retryOnFailure = true)) {
+            return false
+        }
 
         synchronized(readbackLock) {
             clearGeneration++
             pendingReadback?.let(readbackHandler::removeCallbacks)
             pendingReadback = null
         }
-        buffer.clear()
-        synchronized(loadLock) {
-            loaded = true
-        }
 
-        return try {
-            synchronized(fileLock) {
-                File(context.applicationContext.noBackupFilesDir, TRACE_FILE_NAME)
-                    .writeText("", Charsets.UTF_8)
+        return synchronized(fileLock) {
+            val previous = buffer.snapshot()
+            buffer.clear()
+            try {
+                atomicWrite(applicationContext, "")
+                loadedSuccessfully = true
+                true
+            } catch (_: Exception) {
+                previous.lineSequence()
+                    .filter(String::isNotEmpty)
+                    .forEach(buffer::append)
+                false
             }
-            true
-        } catch (_: Exception) {
-            false
         }
     }
 
-    private fun ensureLoaded(context: Context) {
-        if (loaded) {
-            return
+    private fun ensureLoaded(context: Context, retryOnFailure: Boolean = false): Boolean {
+        if (loadedSuccessfully) {
+            return true
         }
-        synchronized(loadLock) {
-            if (loaded) {
-                return
-            }
-            try {
-                val file = File(context.noBackupFilesDir, TRACE_FILE_NAME)
-                if (file.isFile) {
-                    file.readText(Charsets.UTF_8)
-                        .takeLast(MAX_TRACE_CHARACTERS)
-                        .lineSequence()
-                        .filter(String::isNotEmpty)
-                        .forEach(buffer::append)
+        if (loadAttempted && !retryOnFailure) {
+            return false
+        }
+        return synchronized(loadLock) {
+            if (loadedSuccessfully) {
+                true
+            } else if (loadAttempted && !retryOnFailure) {
+                false
+            } else {
+                loadAttempted = true
+                try {
+                    val file = File(context.noBackupFilesDir, TRACE_FILE_NAME)
+                    if (file.isFile) {
+                        file.readText(Charsets.UTF_8)
+                            .takeLast(MAX_TRACE_CHARACTERS)
+                            .lineSequence()
+                            .filter(String::isNotEmpty)
+                            .forEach(buffer::append)
+                    }
+                    loadedSuccessfully = true
+                } catch (_: Exception) {
+                    // Keep the existing file untouched if its contents cannot be read.
+                    loadedSuccessfully = false
                 }
-            } catch (_: Exception) {
-                // A missing or unreadable previous trace must not block controls.
-            } finally {
-                loaded = true
+                loadedSuccessfully
             }
         }
     }
@@ -292,8 +322,7 @@ internal object VolumeDiagnosticTrace {
                     Thread.sleep(WRITE_COALESCE_MS)
                     writtenRevision = synchronized(fileLock) {
                         val snapshot = buffer.snapshotWithRevision()
-                        File(context.noBackupFilesDir, TRACE_FILE_NAME)
-                            .writeText(snapshot.text, Charsets.UTF_8)
+                        atomicWrite(context, snapshot.text)
                         snapshot.revision
                     }
                 } catch (_: Exception) {
@@ -310,6 +339,23 @@ internal object VolumeDiagnosticTrace {
             }
         } catch (_: Exception) {
             writeScheduled.set(false)
+        }
+    }
+
+    private fun atomicWrite(context: Context, contents: String) {
+        val directory = context.noBackupFilesDir
+        val target = File(directory, TRACE_FILE_NAME)
+        val temporary = File(directory, "$TRACE_FILE_NAME.tmp")
+        try {
+            FileOutputStream(temporary).use { output ->
+                output.write(contents.toByteArray(Charsets.UTF_8))
+                output.fd.sync()
+            }
+            Os.rename(temporary.absolutePath, target.absolutePath)
+        } finally {
+            if (temporary.exists()) {
+                temporary.delete()
+            }
         }
     }
 

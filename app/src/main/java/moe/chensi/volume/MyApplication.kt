@@ -49,6 +49,7 @@ class MyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        VolumeDiagnosticTrace.initialize(this)
 
         _floatingButtonEnabled.value =
             floatingButtonPreferences.getBoolean(KEY_FLOATING_BUTTON_ENABLED, false)
