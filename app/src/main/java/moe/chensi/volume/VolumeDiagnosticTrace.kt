@@ -37,9 +37,23 @@ enum class MediaSliderImplementation(val tag: String) {
     }
 }
 
+enum class MediaVolumeWriteMode(val tag: String) {
+    DIRECT_SET("set_stream_volume"),
+    STEP_ADJUST("adjust_stream_volume");
+
+    fun other(): MediaVolumeWriteMode =
+        if (this == DIRECT_SET) STEP_ADJUST else DIRECT_SET
+
+    companion object {
+        fun fromPreference(value: String?): MediaVolumeWriteMode =
+            entries.firstOrNull { it.name == value } ?: DIRECT_SET
+    }
+}
+
 internal object VolumeDiagnosticPreferences {
     private const val PREFERENCES_NAME = "volume_diagnostics"
     private const val OVERLAY_IMPLEMENTATION_KEY = "overlay_media_implementation"
+    private const val MEDIA_WRITE_MODE_KEY = "media_volume_write_mode"
 
     private fun preferences(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
@@ -56,6 +70,21 @@ internal object VolumeDiagnosticPreferences {
     fun setOverlayImplementation(context: Context, implementation: MediaSliderImplementation) {
         if (BuildConfig.VOLUME_DIAGNOSTICS) {
             preferences(context).edit().putString(OVERLAY_IMPLEMENTATION_KEY, implementation.name).apply()
+        }
+    }
+
+    fun mediaWriteMode(context: Context): MediaVolumeWriteMode {
+        if (!BuildConfig.VOLUME_DIAGNOSTICS) {
+            return MediaVolumeWriteMode.DIRECT_SET
+        }
+        return MediaVolumeWriteMode.fromPreference(
+            preferences(context).getString(MEDIA_WRITE_MODE_KEY, MediaVolumeWriteMode.STEP_ADJUST.name)
+        )
+    }
+
+    fun setMediaWriteMode(context: Context, mode: MediaVolumeWriteMode) {
+        if (BuildConfig.VOLUME_DIAGNOSTICS) {
+            preferences(context).edit().putString(MEDIA_WRITE_MODE_KEY, mode.name).apply()
         }
     }
 
@@ -185,7 +214,7 @@ internal object VolumeDiagnosticTrace {
             implementation,
             "readback_after_setter",
             "setter_id=$setterId target=$target stream=STREAM_MUSIC " +
-                "volume=${readVolume(audioManager, streamType)}"
+                readAudioState(context, audioManager, streamType)
         )
     }
 
@@ -224,7 +253,8 @@ internal object VolumeDiagnosticTrace {
                             implementation,
                             "readback_delayed",
                             "setter_id=$setterId target=$target stream=STREAM_MUSIC " +
-                                "delay_ms=$READBACK_DELAY_MS volume=${readVolume(audioManager, streamType)}"
+                                "delay_ms=$READBACK_DELAY_MS " +
+                                readAudioState(applicationContext, audioManager, streamType)
                         )
                     }
                 }
@@ -375,6 +405,26 @@ internal object VolumeDiagnosticTrace {
         } catch (exception: Exception) {
             "error:${exception.javaClass.simpleName}"
         }
+
+    private fun readAudioState(
+        context: Context,
+        audioManager: AudioManager,
+        streamType: Int
+    ): String {
+        val fixedVolume = try {
+            audioManager.isVolumeFixed.toString()
+        } catch (exception: Exception) {
+            "error:${exception.javaClass.simpleName}"
+        }
+        val modifyAudioSettings = try {
+            (context.checkSelfPermission(android.Manifest.permission.MODIFY_AUDIO_SETTINGS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED).toString()
+        } catch (exception: Exception) {
+            "error:${exception.javaClass.simpleName}"
+        }
+        return "volume=${readVolume(audioManager, streamType)} " +
+            "fixed_volume=$fixedVolume modify_audio_settings=$modifyAudioSettings"
+    }
 
     private fun formatFloat(value: Float): String =
         String.format(Locale.US, "%.1f", value)

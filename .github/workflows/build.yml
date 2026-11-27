@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       volume_diagnostics:
-        description: Build the overlay slider A/B diagnostic APK
+        description: Build the opt-in volume slider and write-path diagnostic APK
         required: false
         type: boolean
         default: false

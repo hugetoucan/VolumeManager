@@ -43,7 +43,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import moe.chensi.volume.BuildConfig
 import moe.chensi.volume.DiagnosticSurface
 import moe.chensi.volume.MediaSliderImplementation
+import moe.chensi.volume.MediaVolumeWriteMode
+import moe.chensi.volume.volumeAdjustmentPlan
 import moe.chensi.volume.VolumeDiagnosticTrace
+import moe.chensi.volume.VolumeDiagnosticPreferences
 import moe.chensi.volume.ui.theme.Typography
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -157,17 +160,40 @@ fun StreamVolumeSlider(
 
         volume = target
         val setterId = if (diagnosticMedia) VolumeDiagnosticTrace.nextSetterId() else 0L
+        val writeMode = if (diagnosticMedia) {
+            VolumeDiagnosticPreferences.mediaWriteMode(context)
+        } else {
+            MediaVolumeWriteMode.DIRECT_SET
+        }
+        val beforeVolume = if (diagnosticMedia) {
+            try {
+                audioManager.getStreamVolume(streamType).toString()
+            } catch (exception: Exception) {
+                "error:${exception.javaClass.simpleName}"
+            }
+        } else {
+            "unrecorded"
+        }
         if (diagnosticMedia) {
             VolumeDiagnosticTrace.record(
                 context,
                 diagnosticSurface!!,
                 activeImplementation,
                 "setter_begin",
-                "setter_id=$setterId stream=STREAM_MUSIC target=$target"
+                "setter_id=$setterId stream=STREAM_MUSIC target=$target " +
+                    "write_mode=${writeMode.tag} before=$beforeVolume"
             )
         }
         try {
-            audioManager.setStreamVolume(streamType, target, 0)
+            if (diagnosticMedia && writeMode == MediaVolumeWriteMode.STEP_ADJUST) {
+                val current = audioManager.getStreamVolume(streamType)
+                val plan = volumeAdjustmentPlan(current, target)
+                repeat(plan.steps) {
+                    audioManager.adjustStreamVolume(streamType, plan.direction, 0)
+                }
+            } else {
+                audioManager.setStreamVolume(streamType, target, 0)
+            }
         } catch (exception: Exception) {
             if (diagnosticMedia) {
                 VolumeDiagnosticTrace.record(
@@ -176,6 +202,7 @@ fun StreamVolumeSlider(
                     activeImplementation,
                     "setter_exception",
                     "setter_id=$setterId stream=STREAM_MUSIC target=$target " +
+                        "write_mode=${writeMode.tag} " +
                         "type=${exception.javaClass.simpleName}"
                 )
                 VolumeDiagnosticTrace.recordImmediateReadback(
@@ -205,7 +232,8 @@ fun StreamVolumeSlider(
                 diagnosticSurface!!,
                 activeImplementation,
                 "setter_return",
-                "setter_id=$setterId stream=STREAM_MUSIC target=$target"
+                "setter_id=$setterId stream=STREAM_MUSIC target=$target " +
+                    "write_mode=${writeMode.tag}"
             )
             VolumeDiagnosticTrace.recordImmediateReadback(
                 context,

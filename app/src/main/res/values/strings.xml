@@ -71,7 +71,12 @@
     <string name="disable_battery_optimization">Disable battery optimization</string>
     <string name="accessibility_service_died">Accessibility service died!</string>
     <string name="volume_diagnostics_title">Slider diagnostics</string>
-    <string name="volume_diagnostics_activity_control">Activity Media slider remains Compose (control).</string>
+    <string name="volume_diagnostics_activity_control">Selected Media write mode applies to Activity and overlay sliders.</string>
+    <string name="volume_diagnostics_write_mode">Media write mode: %1$s</string>
+    <string name="volume_diagnostics_direct_set">setStreamVolume</string>
+    <string name="volume_diagnostics_step_adjust">adjustStreamVolume steps</string>
+    <string name="volume_diagnostics_try_step_adjust">Try button-style adjustment</string>
+    <string name="volume_diagnostics_use_direct_set">Use direct setter</string>
     <string name="volume_diagnostics_overlay_implementation">Overlay Media slider: %1$s</string>
     <string name="volume_diagnostics_custom">Compose</string>
     <string name="volume_diagnostics_seekbar">Android SeekBar</string>

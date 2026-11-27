@@ -580,10 +580,39 @@ private fun VolumeDiagnosticsControls() {
     var overlayImplementation by remember(context) {
         mutableStateOf(VolumeDiagnosticPreferences.overlayImplementation(context))
     }
+    var mediaWriteMode by remember(context) {
+        mutableStateOf(VolumeDiagnosticPreferences.mediaWriteMode(context))
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(stringResource(R.string.volume_diagnostics_title))
         Text(stringResource(R.string.volume_diagnostics_activity_control))
+        Text(
+            stringResource(
+                R.string.volume_diagnostics_write_mode,
+                stringResource(
+                    if (mediaWriteMode == MediaVolumeWriteMode.DIRECT_SET) {
+                        R.string.volume_diagnostics_direct_set
+                    } else {
+                        R.string.volume_diagnostics_step_adjust
+                    }
+                )
+            )
+        )
+        TextButton(onClick = {
+            mediaWriteMode = mediaWriteMode.other()
+            VolumeDiagnosticPreferences.setMediaWriteMode(context, mediaWriteMode)
+        }) {
+            Text(
+                stringResource(
+                    if (mediaWriteMode == MediaVolumeWriteMode.DIRECT_SET) {
+                        R.string.volume_diagnostics_try_step_adjust
+                    } else {
+                        R.string.volume_diagnostics_use_direct_set
+                    }
+                )
+            )
+        }
         Text(
             stringResource(
                 R.string.volume_diagnostics_overlay_implementation,
