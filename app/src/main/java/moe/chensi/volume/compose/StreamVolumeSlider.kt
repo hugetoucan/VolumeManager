@@ -44,7 +44,7 @@ import moe.chensi.volume.BuildConfig
 import moe.chensi.volume.DiagnosticSurface
 import moe.chensi.volume.MediaSliderImplementation
 import moe.chensi.volume.MediaVolumeWriteMode
-import moe.chensi.volume.volumeAdjustmentPlan
+import moe.chensi.volume.writeStreamVolumeTarget
 import moe.chensi.volume.VolumeDiagnosticTrace
 import moe.chensi.volume.VolumeDiagnosticPreferences
 import moe.chensi.volume.ui.theme.Typography
@@ -185,15 +185,12 @@ fun StreamVolumeSlider(
             )
         }
         try {
-            if (diagnosticMedia && writeMode == MediaVolumeWriteMode.STEP_ADJUST) {
-                val current = audioManager.getStreamVolume(streamType)
-                val plan = volumeAdjustmentPlan(current, target)
-                repeat(plan.steps) {
-                    audioManager.adjustStreamVolume(streamType, plan.direction, 0)
-                }
-            } else {
-                audioManager.setStreamVolume(streamType, target, 0)
-            }
+            writeStreamVolumeTarget(
+                audioManager = audioManager,
+                streamType = streamType,
+                target = target,
+                adjustBySteps = diagnosticMedia && writeMode == MediaVolumeWriteMode.STEP_ADJUST
+            )
         } catch (exception: Exception) {
             if (diagnosticMedia) {
                 VolumeDiagnosticTrace.record(
@@ -371,7 +368,12 @@ fun StreamVolumeSlider(
                         }
 
                         volume = target
-                        audioManager.setStreamVolume(streamType, target, 0)
+                        writeStreamVolumeTarget(
+                            audioManager = audioManager,
+                            streamType = streamType,
+                            target = target,
+                            adjustBySteps = streamType == AudioManager.STREAM_MUSIC
+                        )
                         onChange?.invoke()
                     } else {
                         applyTarget(value)
